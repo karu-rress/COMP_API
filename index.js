@@ -1,49 +1,95 @@
-const http = require('http');
+/**
+ * 
+ *  COMP_API by karu-rress
+ * 
+ *  Created: 2023-07-24
+ *  Last modified: 2023-07-24
+ * 
+ */
 
+
+// Import required modules
+const http = require('http');
+const { writer } = require('repl');
+const fs = require('fs').promises;
+
+// Server and port definition
 const PORT = 8080;
 const server = http.createServer(serverCallback).listen(PORT);
 
-// 파일로 저장 요망
-
-let compInfo = {};
-
+// Run server
 server.on('listening', () => { console.log(`Opened in ${PORT}`); });
 server.on('error', () => { console.error('Error!'); });
 
-function serverCallback(req, res) {
-    if (req.method === 'GET') {
-        try {
-            if (Object.keys(compInfo).length === 0) {
-                res.writeHead(404, { 'Content-Type' : 'text/html; charset=utf-8' });
-                res.end('Value not set.');
-            }
-            else {
-                res.writeHead(404, { 'Content-Type' : 'text/html; charset=utf-8' });
-                res.end(JSON.stringify(compInfo, null, 2));
-            }
-        } catch (err) {
 
+/**
+ * Callback function used in http.createServer() method.
+ * @param {http.IncomingMessage} request 
+ * @param {http.ServerResponse} response 
+ * @returns 
+ */
+async function serverCallback(request, response) {
+    const path = './comp.json';
+    const header = { 'Content-Type' : 'text/html; charset=utf-8' };
+    let compInfo = {};
+
+    /** @type { (code: number, message: string) => void } */
+    const writeResult = (code, message) => {
+        response.writeHead(code, header);
+        response.end(message); 
+    };
+
+    if (request.method === 'GET') {
+        try {
+            // Check if file exists
+            await fs.access(path, fs.constants.F_OK);
+
+            writeResult(200, (await fs.readFile(path)).toString());
+        } catch (error) {
+            writeResult(404, "Not initialized.");
         }
     }
-    else if (req.method === 'POST') {
+    else if (request.method === 'POST') {
         let body = '';
-        if (req.url === '/') {
-            req.on('data', data => { body = data; });
-            return req.on('end', () => {
+        if (request.url === '/') {
+            request.on('data', data => { body = data; });
+            return request.on('end', async () => {
                 compInfo = JSON.parse(body);
-                res.writeHead(201, { 'Content-Type' : 'text/html; charset=utf-8' });
-			    res.end('Assigned value successfully.');
+
+                // Input validation
+                if (!["clubName", "clubLocation", "clubMembers"].every(key => key in compInfo)) {
+                    writeResult(422, "clubName, clubLocation, clubMembers are required.");
+                } else {
+
+
+                    await fs.writeFile(path, JSON.stringify(compInfo, null, 4));
+                    writeResult(201, "Initialized successfully.");
+                }
             });
         }
-        // GET 요청 시 데이터가 변해선 안됨. 따라서 POST.
-        else if (req.url === '/member') {
-            req.on('data', data => { body = data; });
-            return req.on('end', () => {
-                const { clubMembers } = JSON.parse(body);
-                compInfo.clubMembers = compInfo.clubMembers.concat(clubMembers);
-                res.writeHead(201, { 'Content-Type' : 'text/html; charset=utf-8' });
-			    res.end('Appended members successfully.');
+        // GET method should NOT modify data. Using POST instead.
+        else if (request.url === '/member') {
+            request.on('data', data => { body = data; });
+            return request.on('end', async () => {
+                compInfo = JSON.parse((await fs.readFile(path)).toString())
+                const newMember = JSON.parse(body);
+
+                // Input validation
+                if (!("clubMembers" in newMember)) {
+                    writeResult(422, `Use '{ "clubMembers": [...] }' format.`);
+                } else {
+                    // Append new members
+                    compInfo.clubMembers = compInfo.clubMembers.concat(newMember.clubMembers);
+
+                    // Save
+                    await fs.writeFile(path, JSON.stringify(compInfo, null, 4));
+                    writeResult(201, "Added members successfully.");
+                }
             });
         }
+        else 
+            writeResult(404, "Unknown URL.");
     }
+    else 
+        writeResult(400, "Unsupported request method.");
 }
